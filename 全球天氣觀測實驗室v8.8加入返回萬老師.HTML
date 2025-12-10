@@ -1,0 +1,1047 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>全球天氣即時觀測實驗室 v8.8 Fixed</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flag-icon-css/6.6.6/css/flag-icons.min.css">
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@500;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&display=swap'); 
+        body { font-family: 'Noto Sans TC', sans-serif; margin: 0; overflow: hidden; background-color: #000; }
+        .progress-bar-shine { background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent); background-size: 200% 100%; animation: shine 1.5s infinite; }
+        @keyframes shine { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+        @keyframes pulse-slow { 0%, 100% { opacity: 0.8; transform: scale(1); } 50% { opacity: 0.6; transform: scale(1.05); } }
+        .animate-pulse-slow { animation: pulse-slow 4s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        .animate-spin-slow { animation: spin 8s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .animate-slide-up { animation: slideUp 0.3s ease-out forwards; }
+        @keyframes fadeInDown { from { opacity: 0; transform: translate(-50%, -20px); } to { opacity: 1; transform: translate(-50%, 0); } }
+        input[type=range] { -webkit-appearance: none; background: transparent; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; border-radius: 50%; cursor: pointer; position: relative; z-index: 10; }
+        .timeline-slider::-webkit-slider-thumb { height: 20px; width: 20px; background: #ffffff; margin-top: -8px; box-shadow: 0 0 15px rgba(255, 255, 255, 0.8); border: 2px solid #000; }
+        .timeline-slider::-webkit-slider-runnable-track { width: 100%; height: 6px; cursor: pointer; border-radius: 3px; }
+        .zoom-slider-container { width: 40px; height: 150px; display: flex; align-items: center; justify-content: center; position: relative; }
+        .zoom-slider { width: 150px; height: 6px; background: rgba(255, 255, 255, 0.2); border-radius: 3px; transform: rotate(-90deg); transform-origin: center; cursor: pointer; position: absolute; }
+        .zoom-slider::-webkit-slider-thumb { width: 18px; height: 18px; background: #fff; border-radius: 50%; cursor: pointer; box-shadow: 0 0 10px rgba(0,0,0,0.5); margin-top: -6px; }
+        
+        /* Optimized Custom Scrollbar */
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 3px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 3px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.4); }
+        .custom-scrollbar { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.2) rgba(0,0,0,0.2); }
+        .fi { background-size: cover; border-radius: 2px; box-shadow: 0 0 2px rgba(0,0,0,0.3); }
+
+        /* Toggle Switch */
+        .toggle-checkbox:checked { right: 0; border-color: #3b82f6; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #3b82f6; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo, useCallback, memo } = React;
+        const THREE = window.THREE;
+        const OrbitControls = window.THREE.OrbitControls;
+
+        // --- 1. Icons ---
+        const Icon = ({ d, className, style }) => (<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}><path d={d} /></svg>);
+        const Icons = {
+            Globe: (p) => <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z"/></svg>,
+            MapPin: (p) => <Icon {...p} d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z M12 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6" />,
+            X: (p) => <Icon {...p} d="M18 6L6 18M6 6l12 12" />,
+            Refresh: (p) => <Icon {...p} d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />,
+            Info: (p) => <Icon {...p} d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zm0-14v.01M12 12v5" />,
+            Play: (p) => <Icon {...p} d="M5 3l14 9-14 9V3z" />,
+            Pause: (p) => <Icon {...p} d="M6 4h4v16H6zM14 4h4v16h-4z" />,
+            Settings: (p) => <Icon {...p} d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" />,
+            Check: (p) => <Icon {...p} d="M20 6L9 17l-5-5" />,
+            Alert: (p) => <Icon {...p} d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z M12 9v4 M12 17h.01" />,
+            Thermometer: (p) => <Icon {...p} d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z" />,
+            CloudSun: (p) => <Icon {...p} d="M12 2v2 M12 20v2 M4.93 4.93l1.41 1.41 M17.66 17.66l1.41 1.41 M2 12h2 M20 12h2 M6.34 17.66l-1.41 1.41 M19.07 4.93l-1.41 1.41" />,
+            Clock: (p) => <Icon {...p} d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z M12 6v6l4 2" />,
+            ZoomIn: (p) => <Icon {...p} d="M11 11h4M13 9v4M21 21l-4.35-4.35M19 11a8 8 0 1 1-8-8 8 8 0 0 1 8 8z" />,
+            ZoomOut: (p) => <Icon {...p} d="M11 11h4M21 21l-4.35-4.35M19 11a8 8 0 1 1-8-8 8 8 0 0 1 8 8z" />,
+            RotateCcw: (p) => <Icon {...p} d="M1 4v6h6 M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />,
+            ChevronDown: (p) => <Icon {...p} d="M6 9l6 6 6-6" />,
+            ChevronUp: (p) => <Icon {...p} d="M18 15l-6-6-6 6" />,
+            ExternalLink: (p) => <Icon {...p} d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" />,
+            CloudRain: (p) => <Icon {...p} d="M10 12h4 M12 12v6 M16 16h2 M6 16h2 M10 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2z M17.5 10a4.5 4.5 0 0 0-9 0c0 1.33-.5 2.5-1.5 3.5m4.5 1.5l1-1m-1 0l-1 1" />, 
+            Wind: (p) => <Icon {...p} d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2" />,
+            Calendar: (p) => <Icon {...p} d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2zm-7 5h5v5h-5z" />,
+            Plus: (p) => <Icon {...p} d="M12 5v14M5 12h14" />,
+            Search: (p) => <Icon {...p} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />,
+            Compass: (p) => <Icon {...p} d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z M16.24 7.76l-2.12 6.36-6.36 2.12 2.12-6.36 6.36-2.12z" />,
+            Navigation: (p) => <Icon {...p} d="M3 11l19-9-9 19-2-8-8-2z" />,
+            Droplet: (p) => <Icon {...p} d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" />,
+            Cloud: (p) => <Icon {...p} d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />,
+            Umbrella: (p) => <Icon {...p} d="M12 2v20M2 12a10 10 0 0 1 20 0" />,
+            ToggleOn: (p) => <Icon {...p} d="M16 7H8a5 5 0 0 0 0 10h8a5 5 0 0 0 0-10zm0 8a3 3 0 1 1 0-6 3 3 0 0 1 0 6z" />, 
+            ToggleOff: (p) => <Icon {...p} d="M16 7H8a5 5 0 0 0 0 10h8a5 5 0 0 0 0-10zm-8 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6z" />
+        };
+
+        // --- 2. Data Definitions (Fixing ReferenceError) ---
+        const CITIES_DATA = {
+            ASIA: [{name:"臺北",code:"tw",lat:25.0330,lng:121.5654,country:"臺灣"},{name:"高雄",code:"tw",lat:22.6273,lng:120.3014,country:"臺灣"},{name:"東京",code:"jp",lat:35.6762,lng:139.6503,country:"日本"},{name:"大阪",code:"jp",lat:34.6937,lng:135.5023,country:"日本"},{name:"首爾",code:"kr",lat:37.5665,lng:126.9780,country:"韓國"},{name:"北京",code:"cn",lat:39.9042,lng:116.4074,country:"中國"},{name:"上海",code:"cn",lat:31.2304,lng:121.4737,country:"中國"},{name:"香港",code:"hk",lat:22.3193,lng:114.1694,country:"中國"},{name:"新加坡",code:"sg",lat:1.3521,lng:103.8198,country:"新加坡"},{name:"曼谷",code:"th",lat:13.7563,lng:100.5018,country:"泰國"},{name:"吉隆坡",code:"my",lat:3.1390,lng:101.6869,country:"馬來西亞"},{name:"雅加達",code:"id",lat:-6.2088,lng:106.8456,country:"印尼"},{name:"馬尼拉",code:"ph",lat:14.5995,lng:120.9842,country:"菲律賓"},{name:"孟買",code:"in",lat:19.0760,lng:72.8777,country:"印度"},{name:"馬列",code:"mv",lat:4.1755,lng:73.5093,country:"馬爾地夫"},{name:"臺拉維夫",code:"il",lat:32.0853,lng:34.7818,country:"以色列"},{name:"杜拜",code:"ae",lat:25.2048,lng:55.2708,country:"阿聯酋"},{name:"雅庫茨克",code:"ru",lat:62.0397,lng:129.7422,country:"俄羅斯"},{name:"奧伊米亞康",code:"ru",lat:63.4641,lng:142.7737,country:"俄羅斯"}],
+            EUROPE: [{name:"伊斯坦堡",code:"tr",lat:41.0082,lng:28.9784,country:"土耳其"},{name:"莫斯科",code:"ru",lat:55.7558,lng:37.6173,country:"俄羅斯"},{name:"聖彼得堡",code:"ru",lat:59.9311,lng:30.3609,country:"俄羅斯"},{name:"倫敦",code:"gb",lat:51.5074,lng:-0.1278,country:"英國"},{name:"巴黎",code:"fr",lat:48.8566,lng:2.3522,country:"法國"},{name:"柏林",code:"de",lat:52.5200,lng:13.4050,country:"德國"},{name:"法蘭克福",code:"de",lat:50.1109,lng:8.6821,country:"德國"},{name:"阿姆斯特丹",code:"nl",lat:52.3676,lng:4.9041,country:"荷蘭"},{name:"布魯塞爾",code:"be",lat:50.8503,lng:4.3517,country:"比利時"},{name:"馬德里",code:"es",lat:40.4168,lng:-3.7038,country:"西班牙"},{name:"巴賽隆納",code:"es",lat:41.3851,lng:2.1734,country:"西班牙"},{name:"羅馬",code:"it",lat:41.9028,lng:12.4964,country:"義大利"},{name:"米蘭",code:"it",lat:45.4642,lng:9.1900,country:"義大利"},{name:"維也納",code:"at",lat:48.2082,lng:16.3738,country:"奧地利"},{name:"蘇黎世",code:"ch",lat:47.3769,lng:8.5417,country:"瑞士"},{name:"日內瓦",code:"ch",lat:46.2044,lng:6.1432,country:"瑞士"},{name:"哥本哈根",code:"dk",lat:55.6761,lng:12.5683,country:"丹麥"},{name:"斯德哥爾摩",code:"se",lat:59.3293,lng:18.0686,country:"瑞典"},{name:"赫爾辛基",code:"fi",lat:60.1699,lng:24.9384,country:"芬蘭"},{name:"都柏林",code:"ie",lat:53.3498,lng:-6.2603,country:"愛爾蘭"}],
+            AMERICA: [{name:"紐約",code:"us",lat:40.7128,lng:-74.0060,country:"美國"},{name:"洛杉磯",code:"us",lat:34.0522,lng:-118.2437,country:"美國"},{name:"舊金山",code:"us",lat:37.7749,lng:-122.4194,country:"美國"},{name:"芝加哥",code:"us",lat:41.8781,lng:-87.6298,country:"美國"},{name:"安克拉治",code:"us",lat:61.2181,lng:-149.9003,country:"美國"},{name:"檀香山",code:"us",lat:21.3069,lng:-157.8583,country:"美國"},{name:"關島",code:"gu",lat:13.4443,lng:144.7937,country:"美國"},{name:"墨西哥城",code:"mx",lat:19.4326,lng:-99.1332,country:"墨西哥"},{name:"巴拿馬城",code:"pa",lat:8.9824,lng:-79.5199,country:"巴拿馬"},{name:"危地馬拉市",code:"gt",lat:14.6349,lng:-90.5069,country:"瓜地馬拉"},{name:"馬拿瓜",code:"ni",lat:12.1328,lng:-86.2504,country:"尼加拉瓜"},{name:"聖薩爾瓦多",code:"sv",lat:13.6929,lng:-89.2182,country:"薩爾瓦多"},{name:"特古西加爾巴",code:"hn",lat:14.0723,lng:-87.1921,country:"宏都拉斯"},{name:"聖何塞",code:"cr",lat:9.9281,lng:-84.0907,country:"哥斯大黎加"},{name:"溫哥華",code:"ca",lat:49.2827,lng:-123.1207,country:"加拿大"},{name:"多倫多",code:"ca",lat:43.6532,lng:-79.3832,country:"加拿大"},{name:"聖保羅",code:"br",lat:-23.5505,lng:-46.6333,country:"巴西"},{name:"里約熱內盧",code:"br",lat:-22.9068,lng:-43.1729,country:"巴西"},{name:"布宜諾斯艾利斯",code:"ar",lat:-34.6037,lng:-58.3816,country:"阿根廷"},{name:"利馬",code:"pe",lat:-12.0464,lng:-77.0428,country:"秘魯"},{name:"波哥大",code:"co",lat:4.7110,lng:-74.0721,country:"哥倫比亞"},{name:"聖地亞哥",code:"cl",lat:-33.4489,lng:-70.6693,country:"智利"},{name:"加拉加斯",code:"ve",lat:10.4806,lng:-66.9036,country:"委內瑞拉"},{name:"基多",code:"ec",lat:-0.1807,lng:-78.4678,country:"厄瓜多"}],
+            OCEANIA_AFRICA: [{name:"雪梨",code:"au",lat:-33.8688,lng:151.2093,country:"澳洲"},{name:"奧克蘭",code:"nz",lat:-36.8485,lng:174.7633,country:"紐西蘭"},{name:"威靈頓",code:"nz",lat:-41.2865,lng:174.7762,country:"紐西蘭"},{name:"基督城",code:"nz",lat:-43.5321,lng:172.6362,country:"紐西蘭"},{name:"開羅",code:"eg",lat:30.0444,lng:31.2357,country:"埃及"},{name:"拉各斯",code:"ng",lat:6.5244,lng:3.3792,country:"奈及利亞"},{name:"金沙薩",code:"cd",lat:-4.4419,lng:15.2663,country:"剛果民主共和國"},{name:"約翰尼斯堡",code:"za",lat:-26.2041,lng:28.0473,country:"南非"},{name:"開普敦",code:"za",lat:-33.9249,lng:18.4241,country:"南非"},{name:"內羅畢",code:"ke",lat:-1.2921,lng:36.8219,country:"肯亞"},{name:"阿克拉",code:"gh",lat:5.6037,lng:-0.1870,country:"迦納"},{name:"亞的斯亞貝巴",code:"et",lat:9.0331,lng:38.7444,country:"衣索比亞"},{name:"卡薩布蘭卡",code:"ma",lat:33.5731,lng:-7.5898,country:"摩洛哥"},{name:"安塔那那利佛",code:"mg",lat:-18.8792,lng:47.5079,country:"馬達加斯加"}]
+        };
+
+        const CONSTANTS = {
+            DEFAULT_CITIES: [...CITIES_DATA.ASIA, ...CITIES_DATA.EUROPE, ...CITIES_DATA.AMERICA, ...CITIES_DATA.OCEANIA_AFRICA],
+            CONDITIONS: [
+                { type: 'Sunny', label: '晴朗', svgKey: 'Sunny', hex: '#facc15', bg: 'bg-yellow-100 border-yellow-200 text-yellow-800' },
+                { type: 'PartlyCloudy', label: '多雲', svgKey: 'PartlyCloudy', hex: '#fbbf24', bg: 'bg-orange-100 border-orange-200 text-orange-800' },
+                { type: 'Cloudy', label: '陰天', svgKey: 'Cloudy', hex: '#9ca3af', bg: 'bg-gray-100 border-gray-200 text-gray-800' },
+                { type: 'Drizzle', label: '毛毛雨', svgKey: 'Drizzle', hex: '#60a5fa', bg: 'bg-blue-50 border-blue-200 text-blue-800' },
+                { type: 'Rainy', label: '降雨', svgKey: 'Rainy', hex: '#3b82f6', bg: 'bg-blue-100 border-blue-300 text-blue-900' },
+                { type: 'Thunderstorm', label: '雷雨', svgKey: 'Thunderstorm', hex: '#8b5cf6', bg: 'bg-purple-100 border-purple-200 text-purple-900' },
+                { type: 'Snowy', label: '降雪', svgKey: 'Snowy', hex: '#e5e7eb', bg: 'bg-slate-50 border-slate-200 text-slate-800' },
+                { type: 'Fog', label: '霧', svgKey: 'Fog', hex: '#d1d5db', bg: 'bg-gray-50 border-gray-200 text-gray-700' },
+                { type: 'Error', label: '資料錯誤', svgKey: 'Alert', hex: '#ef4444', bg: 'bg-red-100 border-red-200 text-red-800' },
+            ],
+            SVG_ICONS: {
+                Sunny: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="28" fill="#FDB813" stroke="black" stroke-width="4"/><g stroke="black" stroke-width="4" stroke-linecap="round"><line x1="50" y1="10" x2="50" y2="18" /><line x1="50" y1="82" x2="50" y2="90" /><line x1="10" y1="50" x2="18" y2="50" /><line x1="82" y1="50" x2="90" y2="50" /><line x1="22" y1="22" x2="28" y2="28" /><line x1="72" y1="72" x2="78" y2="78" /><line x1="22" y1="78" x2="28" y2="72" /><line x1="72" y1="28" x2="78" y2="22" /></g></svg>`,
+                Cloudy: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M25,60 Q10,60 10,45 Q10,30 25,30 Q30,10 50,10 Q70,10 75,30 Q90,30 90,45 Q90,60 75,60 L25,60" fill="white" stroke="black" stroke-width="4" stroke-linejoin="round"/></svg>`,
+                PartlyCloudy: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="65" cy="35" r="20" fill="#FDB813" stroke="black" stroke-width="4"/><path d="M25,75 Q10,75 10,60 Q10,45 25,45 Q30,25 50,25 Q70,25 75,45 Q90,45 90,60 Q90,75 75,75 L25,75" fill="white" stroke="black" stroke-width="4" stroke-linejoin="round"/></svg>`,
+                Rainy: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M25,50 Q10,50 10,35 Q10,20 25,20 Q30,0 50,0 Q70,0 75,20 Q90,20 90,35 Q90,50 75,50 L25,50" fill="white" stroke="black" stroke-width="4" stroke-linejoin="round"/><path d="M35,60 L30,80 M50,60 L45,80 M65,60 L60,80" stroke="#60A5FA" stroke-width="5" stroke-linecap="round"/></svg>`,
+                Snowy: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M25,50 Q10,50 10,35 Q10,20 25,20 Q30,0 50,0 Q70,0 75,20 Q90,20 90,35 Q90,50 75,50 L25,50" fill="white" stroke="black" stroke-width="4" stroke-linejoin="round"/><circle cx="35" cy="70" r="3" fill="white"/><circle cx="50" cy="75" r="3" fill="white"/><circle cx="65" cy="70" r="3" fill="white"/></svg>`,
+                Thunderstorm: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M25,50 Q10,50 10,35 Q10,20 25,20 Q30,0 50,0 Q70,0 75,20 Q90,20 90,35 Q90,50 75,50 L25,50" fill="#E5E7EB" stroke="black" stroke-width="4" stroke-linejoin="round"/><path d="M55,55 L40,75 L50,75 L45,95" stroke="#FDB813" stroke-width="4" fill="none" stroke-linejoin="round"/></svg>`,
+                Fog: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M10,35 Q20,25 30,35 T50,35 T70,35 T90,35" fill="none" stroke="white" stroke-width="14" stroke-linecap="round" /><path d="M5,55 Q15,45 25,55 T45,55 T65,55 T85,55" fill="none" stroke="white" stroke-width="14" stroke-linecap="round" /><path d="M15,75 Q25,65 35,75 T55,75 T75,75 T95,75" fill="none" stroke="white" stroke-width="14" stroke-linecap="round" /><path d="M10,35 Q20,25 30,35 T50,35 T70,35 T90,35" fill="none" stroke="black" stroke-width="8" stroke-linecap="round" /><path d="M5,55 Q15,45 25,55 T45,55 T65,55 T85,55" fill="none" stroke="black" stroke-width="8" stroke-linecap="round" /><path d="M15,75 Q25,65 35,75 T55,75 T75,75 T95,75" fill="none" stroke="black" stroke-width="8" stroke-linecap="round" /></svg>`,
+                Drizzle: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M25,50 Q10,50 10,35 Q10,20 25,20 Q30,0 50,0 Q70,0 75,20 Q90,20 90,35 Q90,50 75,50 L25,50" fill="white" stroke="black" stroke-width="4" stroke-linejoin="round"/><line x1="40" y1="60" x2="40" y2="70" stroke="#60A5FA" stroke-width="4" stroke-linecap="round"/><line x1="60" y1="60" x2="60" y2="70" stroke="#60A5FA" stroke-width="4" stroke-linecap="round"/></svg>`,
+                Arrow: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><polygon points="50,15 85,85 50,65 15,85" fill="white" stroke="black" stroke-width="4" stroke-linejoin="round"/></svg>`,
+                Alert: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>` 
+            }
+        };
+
+        const Utils = {
+            convertTemp: (t, unit) => (unit === 'F' && typeof t === 'number') ? Math.round((t * 9/5) + 32) : t,
+            convertWind: (w, unit) => (unit === 'ms' && typeof w === 'number') ? Math.round(w / 3.6 * 10) / 10 : w,
+            getTempColor: (t) => { if (t < 0) return '#3b82f6'; if (t < 15) return '#06b6d4'; if (t < 25) return '#22c55e'; if (t < 35) return '#f97316'; return '#ef4444'; },
+            getProbColor: (p) => { if (p < 10) return '#86efac'; if (p < 40) return '#34d399'; if (p < 70) return '#06b6d4'; return '#3b82f6'; },
+            getHumidityColor: (h) => { if (h < 30) return '#facc15'; if (h < 60) return '#34d399'; if (h < 80) return '#60a5fa'; return '#1e40af'; },
+            getPrecipColor: (p) => { if(p === 0) return '#d1d5db'; if(p < 1) return '#bae6fd'; if(p < 5) return '#60a5fa'; if(p < 10) return '#3b82f6'; return '#4338ca'; },
+            getCloudColor: (c) => { if(c < 20) return '#38bdf8'; if(c < 60) return '#e5e7eb'; return '#9ca3af'; },
+            getWindColor: (w) => { if (w < 20) return '#a5f3fc'; if (w < 40) return '#60a5fa'; if (w < 60) return '#818cf8'; if (w < 90) return '#c084fc'; return '#f472b6'; },
+            getConditionFromWMO: (code) => {
+                const c = CONSTANTS.CONDITIONS;
+                if (code === 0) return c[0]; if (code <= 2) return c[1]; if (code === 3) return c[2]; if (code === 45 || code === 48) return c[7];
+                if (code >= 51 && code <= 55) return c[3]; if (code >= 56 && code <= 67) return c[4]; if (code >= 71 && code <= 77) return c[6];
+                if (code >= 80 && code <= 82) return c[4]; if (code >= 85 && code <= 86) return c[6]; if (code >= 95) return c[5]; return c[0]; 
+            },
+            getWindDirectionText: (degree) => ['北', '東北', '東', '東南', '南', '西南', '西', '西北'][Math.round(((degree %= 360) < 0 ? degree + 360 : degree) / 45) % 8],
+            findClosestData: (timeline, targetTime) => {
+                if (!timeline?.length) return null;
+                return timeline.reduce((prev, curr) => Math.abs(curr.time - targetTime) < Math.abs(prev.time - targetTime) ? curr : prev);
+            },
+            formatLocalTime: (baseDate, offsetSeconds) => {
+                const localDate = new Date(baseDate.getTime() + offsetSeconds * 1000);
+                const offsetHours = offsetSeconds / 3600;
+                const sign = offsetHours >= 0 ? '+' : '';
+                return { 
+                    label: `(UTC${sign}${offsetHours})`, 
+                    time: `${localDate.getUTCHours().toString().padStart(2, '0')}:${localDate.getUTCMinutes().toString().padStart(2, '0')}` 
+                };
+            },
+            latLngToVector3: (lat, lng, radius) => {
+                const phi = (90 - lat) * (Math.PI / 180), theta = (lng + 180) * (Math.PI / 180);
+                return new THREE.Vector3(-(radius * Math.sin(phi) * Math.cos(theta)), radius * Math.cos(phi), radius * Math.sin(phi) * Math.sin(theta));
+            },
+            createCanvasTexture: (drawFn) => {
+                const canvas = document.createElement('canvas'); canvas.width = 128; canvas.height = 128;
+                drawFn(canvas.getContext('2d')); return new THREE.CanvasTexture(canvas);
+            },
+            createSvgTexture: (svgString) => new Promise(resolve => {
+                const img = new Image(); img.onload = () => {
+                    const canvas = document.createElement('canvas'); canvas.width = 128; canvas.height = 128;
+                    canvas.getContext('2d').drawImage(img, 0, 0, 128, 128);
+                    URL.revokeObjectURL(img.src); resolve(new THREE.CanvasTexture(canvas));
+                };
+                img.src = URL.createObjectURL(new Blob([svgString], {type: 'image/svg+xml;charset=utf-8'}));
+            }),
+            getUserLocation: () => new Promise(resolve => navigator.geolocation ? navigator.geolocation.getCurrentPosition(
+                pos => resolve({ name: "我的位置", lat: pos.coords.latitude, lng: pos.coords.longitude, country: "GPS定位" }),
+                () => resolve(null), { timeout: 5000 }) : resolve(null)),
+            getSunDirection: (date) => {
+                const dayOfYear = Math.floor((date - new Date(date.getFullYear(), 0, 0)) / 86400000);
+                const phi = THREE.MathUtils.degToRad(23.45 * Math.sin((2 * Math.PI * (284 + dayOfYear)) / 365));
+                const theta = ((date.getUTCHours() + date.getUTCMinutes() / 60 - 12) / 24) * Math.PI * 2;
+                return new THREE.Vector3(Math.cos(theta) * Math.cos(phi), Math.sin(phi), Math.sin(theta) * Math.cos(phi)).normalize();
+            },
+            getSolarDeclination: (date) => (23.45 * Math.sin((2 * Math.PI * (284 + Math.floor((date - new Date(date.getFullYear(), 0, 0)) / 86400000))) / 365)).toFixed(2)
+        };
+        
+        // --- 3. Component Checks ---
+        const checkWebGL = () => { try { const c = document.createElement('canvas'); return !!(window.WebGLRenderingContext && (c.getContext('webgl') || c.getContext('experimental-webgl'))); } catch (e) { return false; } };
+
+        // --- 4. Components ---
+        const FallbackView = () => (
+            <div className="flex flex-col items-center justify-center h-screen bg-gray-900 text-white p-6 text-center">
+                <Icons.Alert className="w-16 h-16 text-red-500 mb-4" />
+                <h2 className="text-2xl font-bold mb-2">您的裝置不支援 3D 檢視</h2>
+                <p className="text-gray-400">請嘗試使用較新的瀏覽器或裝置以獲得完整體驗。</p>
+            </div>
+        );
+
+        const Navbar = memo(({ loading, onRefresh, onToggleSettings, onToggleLegend, rotating, setRotating, onOpenAddCity, isTimelineOpen, setIsTimelineOpen, onOpenSearch }) => (
+            <div className="absolute top-0 left-0 w-full p-3 md:p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-2 pointer-events-none z-10">
+                <div className="pointer-events-auto bg-black/40 backdrop-blur-md border border-white/10 p-3 md:p-5 rounded-2xl shadow-xl w-full md:w-auto">
+                    <h1 className="text-lg sm:text-3xl font-bold bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent flex items-center gap-2 md:gap-3"><Icons.Globe className="w-5 h-5 md:w-8 md:h-8 text-cyan-400" /> 全球天氣觀測實驗室</h1>
+                    <div className="flex items-center justify-between mt-1">
+                        <div>
+                            <p className="text-xs md:text-sm text-gray-300 flex items-center gap-2"><span className="w-2 h-2 md:w-2.5 md:h-2.5 rounded-full bg-green-500 animate-pulse"></span> Open-Meteo 連線中</p>
+                            <p className="text-[10px] text-gray-500 ml-4 md:ml-5 mt-0.5">by 小萬</p>
+                        </div>
+                        <span className="text-[10px] md:text-xs text-white/40 font-mono ml-4 self-start md:self-center">v8.8 Fixed</span>
+                    </div>
+                </div>
+                <div className="pointer-events-auto flex flex-wrap gap-2 md:gap-3 justify-end w-full md:w-auto">
+                    <a href="https://sites.google.com/view/cutedavid/" target="_blank" rel="noreferrer" className="px-4 py-2 md:py-3 bg-emerald-600/40 backdrop-blur-md border border-emerald-400/30 rounded-full hover:bg-emerald-600/60 transition-colors text-white text-xs md:text-sm font-bold flex items-center gap-2" title="返回萬老師實驗室">
+                         <Icons.ExternalLink className="w-4 h-4" /> 萬老師實驗室
+                    </a>
+                    <button onClick={onOpenAddCity} className="p-2 md:p-3 bg-blue-600/40 backdrop-blur-md border border-blue-400/30 rounded-full hover:bg-blue-600/60 transition-colors" title="新增城市"><Icons.Plus className="w-5 h-5 md:w-6 md:h-6 text-white" /></button>
+                    <button onClick={onOpenSearch} className="p-2 md:p-3 bg-black/40 backdrop-blur-md border border-white/10 rounded-full hover:bg-white/10 transition-colors" title="搜尋城市"><Icons.Search className="w-5 h-5 md:w-6 md:h-6 text-white" /></button>
+                    <button onClick={() => setIsTimelineOpen(!isTimelineOpen)} className={`p-2 md:p-3 backdrop-blur-md border border-white/10 rounded-full transition-colors ${isTimelineOpen ? 'bg-gray-800 text-white' : 'bg-black/40 hover:bg-white/10'}`} title="切換時間軸">{isTimelineOpen ? <Icons.X className="w-5 h-5 md:w-6 md:h-6" /> : <Icons.Clock className="w-5 h-5 md:w-6 md:h-6" />}</button>
+                    <button onClick={onToggleLegend} className="p-2 md:p-3 bg-black/40 backdrop-blur-md border border-white/10 rounded-full hover:bg-white/10"><Icons.Info className="w-5 h-5 md:w-6 md:h-6" /></button>
+                    <button onClick={onToggleSettings} className="p-2 md:p-3 bg-black/40 backdrop-blur-md border border-white/10 rounded-full hover:bg-white/10"><Icons.Settings className="w-5 h-5 md:w-6 md:h-6" /></button>
+                    <button onClick={() => setRotating(!rotating)} className="p-2 md:p-3 bg-black/40 backdrop-blur-md border border-white/10 rounded-full hover:bg-white/10">{rotating ? <Icons.Pause className="w-5 h-5 md:w-6 md:h-6" /> : <Icons.Play className="w-5 h-5 md:w-6 md:h-6" />}</button>
+                    <button onClick={onRefresh} disabled={loading} className={`p-2 md:p-3 bg-black/40 backdrop-blur-md border border-white/10 rounded-full hover:bg-white/10 ${loading ? 'opacity-50' : ''}`}>{loading ? <Icons.RotateCcw className="w-5 h-5 md:w-6 md:h-6 animate-spin" /> : <Icons.Refresh className="w-5 h-5 md:w-6 md:h-6" />}</button>
+                </div>
+            </div>
+        ));
+
+        const ZoomControl = memo(({ zoom, setZoom }) => (
+            <div className="absolute left-4 top-1/2 -translate-y-1/2 z-10 flex flex-col items-center pointer-events-auto bg-black/40 backdrop-blur-md p-2 md:p-3 rounded-full border border-white/10 hidden sm:flex">
+                <Icons.ZoomIn className="w-5 h-5 text-gray-300 mb-3" />
+                <div className="zoom-slider-container"><input type="range" min="2.5" max="10" step="0.1" value={zoom} onChange={(e) => setZoom(parseFloat(e.target.value))} className="zoom-slider" /></div>
+                <Icons.ZoomOut className="w-5 h-5 text-gray-300 mt-3" />
+            </div>
+        ));
+
+        const LoadingScreen = memo(({ progress, message }) => (
+            <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-xl flex flex-col items-center justify-center transition-opacity duration-500">
+                <div className="w-full max-w-md p-6">
+                    <div className="flex items-center justify-center mb-8 relative">
+                            <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full animate-pulse-slow"></div>
+                            <Icons.Globe className="w-20 h-20 text-blue-400 animate-spin-slow relative z-10" />
+                    </div>
+                    <h2 className="text-2xl font-bold text-white text-center mb-2">全球天氣觀測實驗室</h2>
+                    <p className="text-blue-300 text-center mb-6 font-mono text-sm">{message}</p>
+                    <div className="relative h-2 w-full bg-gray-800 rounded-full overflow-hidden border border-white/10">
+                        <div className="absolute top-0 left-0 h-full bg-blue-500 transition-all duration-300 ease-out progress-bar-shine" style={{ width: `${progress}%` }}></div>
+                    </div>
+                    <div className="flex justify-between mt-2 text-xs text-gray-500 font-mono"><span>INITIALIZING</span><span>{progress}%</span></div>
+                </div>
+            </div>
+        ));
+
+        const Toast = memo(({ msg, type, onClose }) => {
+            useEffect(() => { const timer = setTimeout(onClose, 3000); return () => clearTimeout(timer); }, [onClose]);
+            return (
+                <div className={`fixed top-24 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-xl shadow-2xl backdrop-blur-md border flex items-center gap-3 animate-fade-in-down ${type === 'success' ? 'bg-green-500/20 border-green-500/50 text-green-200' : 'bg-red-500/20 border-red-500/50 text-red-200'}`}>
+                    {type === 'success' ? <Icons.Check className="w-6 h-6 text-green-400" /> : <Icons.Alert className="w-6 h-6 text-red-400" />}
+                    <span className="font-bold tracking-wide text-sm md:text-base whitespace-nowrap">{msg}</span>
+                </div>
+            );
+        });
+
+        const TimelineControl = memo(({ timeline, timeIndex, setTimeIndex, nowIndex, playing, setPlaying, onReset, isRealtime, isOpen }) => {
+            const [nowDate, setNowDate] = useState(new Date());
+            useEffect(() => { if(isRealtime) { const timer = setInterval(() => setNowDate(new Date()), 60000); setNowDate(new Date()); return () => clearInterval(timer); } }, [isRealtime]);
+            
+            const currentLabel = useMemo(() => {
+                const target = isRealtime ? nowDate : (timeline?.[timeIndex] || null);
+                if (!target) return "載入中...";
+                let timeZone = 'Asia/Taipei';
+                try { timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || timeZone; } catch(e) {}
+                const timeStr = target.toLocaleTimeString('zh-TW', { timeZone, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', weekday: 'short', hour12: false });
+                const zoneLabel = timeZone === 'Asia/Taipei' ? '(台灣 UTC+8)' : '(當地時間)';
+                return `${timeStr} ${zoneLabel}`;
+            }, [timeline, timeIndex, isRealtime, nowDate]);
+
+            const ticks = useMemo(() => {
+                if(!timeline) return [];
+                let timeZone = 'Asia/Taipei';
+                try { timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || timeZone; } catch(e) {}
+                return timeline.map((t, i) => parseInt(t.toLocaleTimeString('en-US', { timeZone, hour: 'numeric', hour12: false })) === 0 ? { label: t.toLocaleDateString('zh-TW', { timeZone, month: 'numeric', day: 'numeric' }), percent: (i/timeline.length)*100 } : null).filter(Boolean);
+            }, [timeline]);
+
+            const tenetGradient = useMemo(() => {
+                const nowPercent = timeline?.length ? (nowIndex / (timeline.length - 1)) * 100 : 0;
+                return { background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${nowPercent}%, #ef4444 ${nowPercent}%, #ef4444 100%)` };
+            }, [timeline, nowIndex]);
+
+            return (
+                <div className={`absolute bottom-0 left-0 w-full flex justify-center pointer-events-none z-30 transition-transform duration-500 ease-in-out ${isOpen ? 'translate-y-0' : 'translate-y-[120%]'}`}>
+                    <div className="pointer-events-auto w-[98%] md:w-[95%] max-w-4xl bg-black/80 backdrop-blur-xl border border-white/10 rounded-t-2xl p-4 md:p-6 shadow-2xl mx-auto mb-0">
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-3">
+                            <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-start">
+                                <button onClick={() => setPlaying(!playing)} className="w-10 h-10 md:w-12 md:h-12 flex flex-shrink-0 items-center justify-center bg-blue-600 hover:bg-blue-500 rounded-full shadow-lg transition-colors">{playing ? <Icons.Pause className="w-5 h-5 md:w-6 md:h-6 fill-current" /> : <Icons.Play className="w-5 h-5 md:w-6 md:h-6 ml-1 fill-current" />}</button>
+                                <div>
+                                    <div className="text-[10px] text-gray-400 font-bold mb-1 uppercase tracking-wider font-[Rajdhani]">Global Timeline ({Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Taipei'})</div>
+                                    <div className="text-sm md:text-xl font-mono font-bold text-white flex items-center gap-2 md:gap-3"><Icons.Clock className={`w-4 h-4 md:w-5 md:h-5 ${isRealtime ? 'text-green-400' : 'text-blue-400'}`} /> {currentLabel} {isRealtime && <span className="text-[10px] bg-green-500/20 text-green-400 px-2 py-0.5 rounded ml-2">LIVE</span>}</div>
+                                </div>
+                                <button onClick={onReset} className={`text-xs md:text-sm flex items-center gap-2 px-3 py-1.5 rounded-full font-medium transition-colors ml-auto sm:ml-0 ${isRealtime ? 'bg-green-600/30 text-green-300 ring-1 ring-green-500' : 'bg-white/10 hover:bg-white/20 text-white'}`}><Icons.RotateCcw className="w-3 h-3" /> <span className="hidden sm:inline">回到現在</span></button>
+                            </div>
+                            <div className="text-right hidden sm:block"><div className="text-sm text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-red-500 font-bold font-[Rajdhani] uppercase">Past歷史(藍色)⬌Future預測(紅色)</div></div>
+                        </div>
+                        <div className="relative pt-2 pb-6">
+                            <input type="range" min="0" max={timeline ? timeline.length - 1 : 0} value={timeIndex} onChange={(e) => setTimeIndex(parseInt(e.target.value))} style={tenetGradient} className="timeline-slider w-full h-3 rounded-full appearance-none cursor-pointer focus:outline-none transition-all duration-300" />
+                            <div className="absolute top-2 w-1 h-5 bg-white shadow-[0_0_10px_white] z-0 pointer-events-none" style={{ left: `${(nowIndex / (timeline ? timeline.length - 1 : 1)) * 100}%`, transform: 'translateX(-50%)' }}></div>
+                            <div className="absolute w-full top-8 h-4">{ticks.map((tick, i) => (<div key={i} className={`absolute transform -translate-x-1/2 text-[10px] font-mono font-bold text-gray-400`} style={{ left: `${tick.percent}%` }}><div className={`h-2 w-px mx-auto mb-1 bg-gray-500/50`}></div> {tick.label}</div>))}</div>
+                        </div>
+                    </div>
+                </div>
+            );
+        });
+
+        const CitySummaryCard = memo(({ city, data, tempUnit, windUnit, localTime, onReload }) => (
+            <>
+                <div className="absolute top-2 right-2 w-32 h-32 opacity-20 pointer-events-none" dangerouslySetInnerHTML={{ __html: CONSTANTS.SVG_ICONS[data.condition.svgKey] }} />
+                <div className="flex items-center gap-2 mb-1 relative z-10"><Icons.MapPin className="w-4 h-4 text-blue-600" /><span className="text-blue-600 text-sm font-bold uppercase">{city.country}</span></div>
+                <h2 className="text-3xl font-bold text-gray-900 mb-4 relative z-10 flex items-center gap-3">{city.code && <span className={`fi fi-${city.code.toLowerCase()} text-2xl shadow-sm rounded-sm`} />} {city.name}</h2>
+                {data.error ? (
+                     <div className="text-red-500 font-bold text-lg mb-4 flex items-center gap-2">
+                         <Icons.Alert className="w-6 h-6"/> 
+                         <span>資料載入失敗</span>
+                         <button onClick={onReload} className="ml-2 p-1.5 bg-red-100 hover:bg-red-200 rounded-full transition-colors" title="重新載入">
+                            <Icons.Refresh className="w-4 h-4 text-red-600" />
+                         </button>
+                     </div>
+                ) : (
+                    <div className="flex flex-col gap-2 mb-4 relative z-10">
+                        <div className="flex items-center justify-between mb-1">
+                            <span className="text-xl font-light text-gray-500">當地時間</span>
+                            <div className="flex items-center gap-2">
+                                    <span className={`text-xs font-bold px-2 py-0.5 rounded ${data.isDay ? 'bg-orange-100 text-orange-600 border border-orange-200' : 'bg-blue-100 text-blue-600 border border-blue-200'}`}>{data.isDay ? '晝 Day' : '夜 Night'}</span>
+                                    <div className="text-xl md:text-2xl font-light text-gray-900 font-mono tracking-wider flex items-baseline"><span className="text-[0.5em] text-gray-500 mr-2 transform -translate-y-0.5">{localTime.label}</span>{localTime.time}</div>
+                            </div>
+                        </div>
+                        <div className="flex items-center justify-between"><span className="text-xl font-light text-gray-500">氣溫</span><div className="text-3xl font-light text-gray-900">{Utils.convertTemp(data.temp, tempUnit)}°{tempUnit}</div></div>
+                        <div className="flex items-center justify-between"><span className="text-xl font-light text-gray-500">降雨機率</span><div className="text-3xl font-light text-gray-900">{data.prob}%</div></div>
+                        <div className="flex items-center justify-between"><span className="text-xl font-light text-gray-500">降水量</span><div className="text-3xl font-light text-gray-900">{data.precipitation} mm</div></div>
+                        <div className="flex items-center justify-between"><span className="text-xl font-light text-gray-500">總雲量</span><div className="text-3xl font-light text-gray-900">{data.cloudcover}%</div></div>
+                        <div className="flex items-center justify-between"><span className="text-xl font-light text-gray-500">濕度</span><div className="text-3xl font-light text-gray-900">{data.humidity}%</div></div>
+                        <div className="flex items-center justify-between">
+                            <span className="text-xl font-light text-gray-500">風速/風向</span>
+                            <div className="text-right">
+                                <div className="text-3xl font-light text-gray-900 flex items-center justify-end gap-2">{Utils.convertWind(data.wind, windUnit)} <span className="text-sm">{windUnit === 'kmh' ? 'km/h' : 'm/s'}</span>
+                                    <div className="flex items-center gap-1 bg-gray-200 rounded px-1.5 py-0.5" title={`${data.windDir}° ${Utils.getWindDirectionText(data.windDir)}`}><Icons.Navigation className="w-4 h-4 text-gray-700" style={{ transform: `rotate(${data.windDir + 180}deg)` }} /><span className="text-xs font-bold text-gray-600">{Utils.getWindDirectionText(data.windDir)}</span></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div className={`text-sm font-bold mt-1 px-3 py-1 rounded-full text-center ${data.condition.bg}`}>{data.condition.label}</div>
+                    </div>
+                )}
+            </>
+        ));
+
+        const CityDetailCard = memo(({ city, currentMasterTime, onClose, isRealtime, tempUnit, windUnit, onReload }) => {
+            const [showForecast, setShowForecast] = useState(false);
+            const [now, setNow] = useState(new Date());
+            useEffect(() => { if (isRealtime) { setNow(new Date()); const timer = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(timer); } }, [isRealtime]);
+            
+            const currentData = useMemo(() => {
+                if (!city?.weather) return null;
+                if (city.weather.error) return { ...city.weather, error: true };
+                
+                if (!city.weather.timeline) return null;
+                const closestData = Utils.findClosestData(city.weather.timeline, currentMasterTime);
+                return closestData ? { ...closestData, utcOffset: city.weather.utcOffset, isRealtime } : null;
+            }, [city, currentMasterTime, isRealtime]);
+
+            const localTimeData = useMemo(() => {
+                if (!currentData || currentData.error) return { label: "", time: "--:--" };
+                return Utils.formatLocalTime(isRealtime ? now : currentMasterTime, currentData.utcOffset);
+            }, [currentData, now, isRealtime, currentMasterTime]);
+
+            const statusLabel = useMemo(() => {
+                if (!currentData || currentData.error) return "資料不可用";
+                if (currentData?.isRealtime) return <><span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span> 即時觀測</>;
+                return (currentData?.time < new Date()) ? "歷史資料" : "未來預測";
+            }, [currentData]);
+
+            if(!city || !currentData) return null;
+
+            return (
+                <div className="absolute inset-0 z-30 flex items-center justify-center" onClick={onClose}>
+                    <div className="pointer-events-auto bg-white/90 backdrop-blur-xl border border-gray-200 rounded-2xl p-5 shadow-2xl w-[90%] md:w-full max-w-sm max-h-[75vh] overflow-y-auto custom-scrollbar touch-pan-y animate-[pulse-slow_0.5s_ease-out] relative mb-16 md:mb-0" style={{ WebkitOverflowScrolling: 'touch' }} onClick={(e) => e.stopPropagation()}>
+                        <CitySummaryCard city={city} data={currentData} tempUnit={tempUnit} windUnit={windUnit} localTime={localTimeData} onReload={onReload} />
+                        
+                        {!currentData.error && (
+                            <>
+                                <div className="text-xs text-gray-500 mb-3 font-mono flex items-center gap-1">{statusLabel}</div>
+                                <button onClick={() => setShowForecast(!showForecast)} className="w-full flex justify-between bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-lg mb-3 relative z-10 text-gray-700">
+                                    <span className="text-sm flex gap-2"><Icons.Check className="w-4 h-4" /> 未來 7 天預報</span> {showForecast ? <Icons.ChevronUp className="w-4 h-4" /> : <Icons.ChevronDown className="w-4 h-4" />}
+                                </button>
+                                <div className={`space-y-2 overflow-hidden transition-all duration-300 relative z-10 ${showForecast ? 'max-h-60 opacity-100 overflow-y-auto custom-scrollbar touch-pan-y' : 'max-h-0 opacity-0'}`} style={{ WebkitOverflowScrolling: 'touch' }}>
+                                    {city.weather.daily.map((day, idx) => (
+                                        <div key={idx} className="flex justify-between text-sm px-1 border-b border-gray-100 py-1">
+                                            <span className="text-gray-500 w-12 font-medium">{day.date}</span>
+                                            <div className="w-6 h-6" dangerouslySetInnerHTML={{ __html: CONSTANTS.SVG_ICONS[day.condition.svgKey] }} />
+                                            <div className="flex gap-2 font-mono text-gray-800"><span className="font-bold">{Utils.convertTemp(day.max, tempUnit)}°</span><span className="text-gray-400">{Utils.convertTemp(day.min, tempUnit)}°</span></div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </>
+                        )}
+                        <div className="mt-3 pt-3 border-t border-gray-200 flex gap-2 relative z-10">
+                            <a href={`https://www.google.com/search?q=${city.name}+weather`} target="_blank" className="flex-1 flex justify-center gap-2 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-bold text-white"><Icons.ExternalLink className="w-4 h-4" /> 詳情</a>
+                        </div>
+                    </div>
+                </div>
+            );
+        });
+
+        const SearchModal = memo(({ show, onClose, cityData, onSelectCity, onOpenAddCity }) => {
+            const [query, setQuery] = useState("");
+            const [filteredGroups, setFilteredGroups] = useState({});
+
+            const groupedCities = useMemo(() => {
+                const groups = { '亞洲': [], '歐洲': [], '美洲': [], '大洋洲/非洲': [], '其他': [] };
+                
+                const sortByStroke = (a, b) => a.name.localeCompare(b.name, 'zh-TW');
+
+                const asia = [...CITIES_DATA.ASIA].sort(sortByStroke);
+                const europe = [...CITIES_DATA.EUROPE].sort(sortByStroke);
+                const america = [...CITIES_DATA.AMERICA].sort(sortByStroke);
+                const oceania = [...CITIES_DATA.OCEANIA_AFRICA].sort(sortByStroke);
+
+                groups['亞洲'] = asia;
+                groups['歐洲'] = europe;
+                groups['美洲'] = america;
+                groups['大洋洲/非洲'] = oceania;
+                
+                return groups;
+            }, []);
+
+            useEffect(() => {
+                if (!query.trim()) { 
+                    setFilteredGroups(groupedCities); 
+                    return; 
+                }
+                const lower = query.toLowerCase();
+                const newGroups = {};
+                Object.keys(groupedCities).forEach(key => {
+                    const filtered = groupedCities[key].filter(c => c.name.toLowerCase().includes(lower) || (c.country && c.country.toLowerCase().includes(lower)));
+                    if (filtered.length > 0) newGroups[key] = filtered;
+                });
+                
+                const customMatches = cityData.filter(c => !CONSTANTS.DEFAULT_CITIES.find(dc => dc.name === c.name) && (c.name.toLowerCase().includes(lower) || (c.country && c.country.toLowerCase().includes(lower))));
+                if(customMatches.length > 0) {
+                     newGroups['自訂/搜尋結果'] = customMatches;
+                }
+
+                setFilteredGroups(newGroups);
+
+            }, [query, groupedCities, cityData]);
+
+            if (!show) return null;
+
+            return (
+                <div className="absolute inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-gray-900 border border-white/20 rounded-2xl p-6 w-full max-w-md shadow-2xl h-[600px] flex flex-col">
+                        <div className="flex justify-between items-center mb-4">
+                            <h2 className="text-xl font-bold text-white flex gap-2"><Icons.Search className="w-6 h-6 text-blue-400" /> 搜尋城市</h2>
+                            <button onClick={onClose}><Icons.X className="w-6 h-6 text-gray-400" /></button>
+                        </div>
+                        <input type="text" className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 mb-4" placeholder="輸入城市名稱..." value={query} onChange={(e) => setQuery(e.target.value)} autoFocus />
+                        <div className="flex-1 overflow-y-auto custom-scrollbar space-y-6">
+                            {Object.keys(filteredGroups).length > 0 ? (
+                                Object.keys(filteredGroups).map(region => (
+                                    <div key={region}>
+                                        <h3 className="text-blue-400 text-xs font-bold uppercase tracking-wider mb-2 sticky top-0 bg-gray-900/95 backdrop-blur py-1 border-b border-white/10">{region}</h3>
+                                        <div className="space-y-2">
+                                            {filteredGroups[region].map((city, idx) => (
+                                                <div key={idx} onClick={() => { onSelectCity(city); onClose(); }} className="p-3 bg-white/5 hover:bg-white/10 rounded-lg cursor-pointer flex justify-between items-center transition-colors">
+                                                    <div><div className="font-bold text-white">{city.name}</div><div className="text-xs text-gray-400">{city.country}</div></div>
+                                                    <div className="text-blue-400 text-xs font-mono">前往 &rarr;</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="text-center py-8">
+                                    <p className="text-gray-400 mb-4">找不到相關城市</p>
+                                    <button onClick={() => { onClose(); onOpenAddCity(query); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 mx-auto"><Icons.Plus className="w-4 h-4" /> 新增 "{query}"</button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        });
+
+        const SettingsModal = memo(({ show, onClose, viewMode, setViewMode, tempUnit, setTempUnit, windUnit, setWindUnit, currentDate, enableTerminator, setEnableTerminator, enableDayNight, setEnableDayNight, autoRefresh, setAutoRefresh }) => {
+            if(!show) return null;
+            return (
+                <div className="absolute inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-gray-900 border border-white/20 rounded-2xl p-6 md:p-8 w-full max-w-lg max-h-[85vh] overflow-y-auto custom-scrollbar touch-pan-y" style={{ WebkitOverflowScrolling: 'touch' }}>
+                        <div className="flex justify-between items-center mb-6"><h2 className="text-2xl font-bold flex gap-2"><Icons.Settings className="w-6 h-6 text-blue-400" /> 設定</h2><button onClick={onClose}><Icons.X className="w-6 h-6 text-gray-400" /></button></div>
+                        <div className="mb-6 p-4 bg-blue-900/20 border border-blue-500/30 rounded-xl">
+                            <h3 className="text-blue-300 text-sm font-bold uppercase mb-2 flex items-center gap-2"><Icons.Compass className="w-4 h-4" /> 天文監控數據 (Real-time Physics)</h3>
+                            <div className="grid grid-cols-2 gap-4 text-sm font-mono text-gray-300">
+                                <div><div className="text-gray-500 text-xs">太陽赤緯 (季節)</div><div className="text-white font-bold text-lg">{currentDate ? Utils.getSolarDeclination(currentDate) : "0.00"}°</div></div>
+                                <div><div className="text-gray-500 text-xs">UTC 時間</div><div className="text-white font-bold text-lg">{currentDate.getUTCHours()}:{currentDate.getUTCMinutes().toString().padStart(2,'0')}</div></div>
+                            </div>
+                            <div className="mt-2 text-[10px] text-gray-500">* 系統已根據當前日期計算太陽傾角。赤緯 &gt; 0 為北半球夏季，&lt; 0 為冬季。</div>
+                        </div>
+
+                        <div className="flex items-center justify-between mb-4 bg-white/5 p-4 rounded-xl border border-white/10">
+                            <div><h3 className="text-gray-200 font-bold text-sm">啟用真實晨昏線特效</h3><p className="text-xs text-gray-500 mt-1">顯示物理精確的大氣散射光澤與日夜分界</p></div>
+                            <div className="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
+                                <input type="checkbox" name="toggle" id="toggle" checked={enableTerminator} onChange={(e) => setEnableTerminator(e.target.checked)} className="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer transition-all duration-300 ease-in-out"/>
+                                <label htmlFor="toggle" className={`toggle-label block overflow-hidden h-6 rounded-full cursor-pointer ${enableTerminator ? 'bg-blue-600' : 'bg-gray-700'}`}></label>
+                            </div>
+                        </div>
+
+                         <div className="flex items-center justify-between mb-4 bg-white/5 p-4 rounded-xl border border-white/10">
+                            <div><h3 className="text-gray-200 font-bold text-sm">顯示晝夜交替</h3><p className="text-xs text-gray-500 mt-1">關閉後將顯示完整的白晝地球</p></div>
+                            <div className="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
+                                <input type="checkbox" name="toggleDayNight" id="toggleDayNight" checked={enableDayNight} onChange={(e) => setEnableDayNight(e.target.checked)} className="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer transition-all duration-300 ease-in-out"/>
+                                <label htmlFor="toggleDayNight" className={`toggle-label block overflow-hidden h-6 rounded-full cursor-pointer ${enableDayNight ? 'bg-blue-600' : 'bg-gray-700'}`}></label>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center justify-between mb-6 bg-white/5 p-4 rounded-xl border border-white/10">
+                            <div><h3 className="text-gray-200 font-bold text-sm">定時更新資料 (每 60 分鐘)</h3><p className="text-xs text-gray-500 mt-1">每小時自動重新抓取最新的氣象數據</p></div>
+                            <div className="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
+                                <input type="checkbox" name="autoRefresh" id="autoRefresh" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} className="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer transition-all duration-300 ease-in-out"/>
+                                <label htmlFor="autoRefresh" className={`toggle-label block overflow-hidden h-6 rounded-full cursor-pointer ${autoRefresh ? 'bg-blue-600' : 'bg-gray-700'}`}></label>
+                            </div>
+                        </div>
+
+                        <label className="text-gray-300 block mb-3 font-medium text-sm uppercase tracking-wider">顯示模式 (View Mode)</label>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+                            {[
+                                { m: 'weather', i: 'CloudSun', c: 'text-yellow-400', l: '天氣' },
+                                { m: 'temperature', i: 'Thermometer', c: 'text-red-400', l: '氣溫' },
+                                { m: 'probability', i: 'CloudRain', c: 'text-cyan-400', l: '降雨機率' },
+                                { m: 'precipitation', i: 'Umbrella', c: 'text-blue-500', l: '降水量' },
+                                { m: 'cloudcover', i: 'Cloud', c: 'text-gray-300', l: '總雲量' },
+                                { m: 'humidity', i: 'Droplet', c: 'text-blue-300', l: '濕度' },
+                                { m: 'wind', i: 'Wind', c: 'text-indigo-400', l: '風速' },
+                                { m: 'windDir', i: 'Navigation', c: 'text-purple-400', l: '風向' }
+                            ].map(item => {
+                                const IconComp = Icons[item.i];
+                                return <button key={item.m} onClick={() => setViewMode(item.m)} className={`p-4 rounded-xl border flex flex-col items-center gap-2 ${viewMode === item.m ? 'bg-blue-600/30 border-blue-500' : 'bg-white/5 border-white/10'}`}><IconComp className={`w-6 h-6 ${item.c}`} /> <span className="font-bold text-xs">{item.l}</span></button>
+                            })}
+                        </div>
+                        <label className="text-gray-300 block mb-3 font-medium text-sm uppercase tracking-wider">溫度單位</label>
+                        <div className="flex bg-white/5 rounded-lg p-1 mb-6"><button onClick={() => setTempUnit('C')} className={`flex-1 py-2 rounded-md font-bold text-sm transition-all ${tempUnit === 'C' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>攝氏 (°C)</button><button onClick={() => setTempUnit('F')} className={`flex-1 py-2 rounded-md font-bold text-sm transition-all ${tempUnit === 'F' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>華氏 (°F)</button></div>
+                        <label className="text-gray-300 block mb-3 font-medium text-sm uppercase tracking-wider">風速單位</label>
+                        <div className="flex bg-white/5 rounded-lg p-1 mb-6"><button onClick={() => setWindUnit('kmh')} className={`flex-1 py-2 rounded-md font-bold text-sm transition-all ${windUnit === 'kmh' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>公里/時 (km/h)</button><button onClick={() => setWindUnit('ms')} className={`flex-1 py-2 rounded-md font-bold text-sm transition-all ${windUnit === 'ms' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>公尺/秒 (m/s)</button></div>
+                        <button onClick={onClose} className="w-full py-4 bg-blue-600 rounded-xl font-bold">確認設定</button>
+                    </div>
+                </div>
+            );
+        });
+
+        const LegendModal = memo(({ show, onClose, tempUnit, windUnit }) => {
+            const [activeTab, setActiveTab] = useState('weather');
+            if(!show) return null;
+            return (
+                <div className="absolute inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-gray-900 border border-white/20 rounded-2xl p-6 md:p-8 w-full max-w-lg shadow-2xl max-h-[85vh] overflow-y-auto custom-scrollbar touch-pan-y" style={{ WebkitOverflowScrolling: 'touch' }}>
+                        <div className="flex justify-between items-center mb-6"><h2 className="text-2xl font-bold flex gap-2"><Icons.Info className="w-6 h-6 text-blue-400" /> 圖例說明</h2><button onClick={onClose}><Icons.X className="w-6 h-6 text-gray-400" /></button></div>
+                        <div className="flex gap-2 mb-6 bg-white/5 p-1 rounded-xl overflow-x-auto custom-scrollbar touch-pan-x" style={{ WebkitOverflowScrolling: 'touch' }}>
+                            {['weather:天氣', 'temp:氣溫', 'prob:降雨機率', 'precip:降水量', 'cloud:總雲量', 'humidity:濕度', 'wind:風速', 'windDir:風向'].map(t => { const [key, label] = t.split(':'); return <button key={key} onClick={() => setActiveTab(key)} className={`flex-1 py-2 px-3 whitespace-nowrap rounded-lg font-bold transition-all ${activeTab === key ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}>{label}</button> })}
+                        </div>
+                        <div className="h-64 overflow-y-auto pr-2 custom-scrollbar touch-pan-y" style={{ WebkitOverflowScrolling: 'touch' }}>
+                            {activeTab === 'weather' ? <div className="grid grid-cols-2 gap-4">{CONSTANTS.CONDITIONS.map(c => <div key={c.type} className="flex items-center gap-3 bg-white/5 p-2 rounded-lg"><div className="w-8 h-8" dangerouslySetInnerHTML={{ __html: CONSTANTS.SVG_ICONS[c.svgKey] }} /><span className="text-gray-200">{c.label}</span></div>)}</div> 
+                            : activeTab === 'windDir' ? <div className="space-y-4"><p className="text-sm text-gray-300">箭頭方向表示風的流向，顏色代表風速強度。</p><div className="flex flex-col gap-3">{[180, 90, 0].map((rot, i) => <div key={i} className="flex items-center gap-3"><Icons.Navigation className={`w-6 h-6 ${i===0?'text-[#a5f3fc]':i===1?'text-[#818cf8]':'text-[#f472b6]'}`} style={{transform:`rotate(${rot}deg)`}} /><span className="text-gray-200">{i===0?'微風 (北)':i===1?'強風 (東)':'暴風 (南)'}</span></div>)}</div></div>
+                            : <div className="space-y-3">{
+                                (activeTab === 'temp' ? [{c:'bg-red-500',l:'極熱',v:35},{c:'bg-[#f97316]',l:'炎熱',v:25},{c:'bg-green-500',l:'舒適',v:15},{c:'bg-cyan-500',l:'涼爽',v:0},{c:'bg-blue-600',l:'寒冷',v:-10}] :
+                                activeTab === 'prob' ? [{c:'bg-[#3b82f6]',l:'高機率 (70%+)'},{c:'bg-[#06b6d4]',l:'中高 (40-69%)'},{c:'bg-[#34d399]',l:'中低 (10-39%)'},{c:'bg-[#86efac]',l:'低機率 (0-9%)'}] :
+                                activeTab === 'precip' ? [{c:'bg-[#4338ca]',l:'豪雨 (>10mm)'},{c:'bg-[#3b82f6]',l:'大雨 (5-10mm)'},{c:'bg-[#60a5fa]',l:'中雨 (1-5mm)'},{c:'bg-[#bae6fd]',l:'小雨 (<1mm)'},{c:'bg-[#d1d5db]',l:'無降水 (0mm)'}] :
+                                activeTab === 'cloud' ? [{c:'bg-[#9ca3af]',l:'陰天 (60-100%)'},{c:'bg-[#e5e7eb]',l:'多雲 (20-60%)'},{c:'bg-[#38bdf8]',l:'晴朗 (<20%)'}] :
+                                activeTab === 'humidity' ? [{c:'bg-[#1e40af]',l:'極潮濕 (>80%)'},{c:'bg-[#60a5fa]',l:'潮濕 (60-80%)'},{c:'bg-[#34d399]',l:'舒適 (30-60%)'},{c:'bg-[#facc15]',l:'乾燥 (<30%)'}] :
+                                [{c:'bg-[#f472b6]',l:'暴風',v:90},{c:'bg-[#c084fc]',l:'烈風',v:60},{c:'bg-[#818cf8]',l:'強風',v:40},{c:'bg-[#60a5fa]',l:'和風',v:20},{c:'bg-[#a5f3fc]',l:'微風',v:0}]).map((i,idx) => {
+                                    let txt = i.l;
+                                    if(activeTab==='temp') txt += i.v>=35?` >${Utils.convertTemp(35,tempUnit)}°`:i.v<0?` <${Utils.convertTemp(0,tempUnit)}°`:` ${Utils.convertTemp(i.v,tempUnit)}-${Utils.convertTemp(i.v+10,tempUnit)}°`;
+                                    if(activeTab==='wind') txt += i.v>=90?` >${Utils.convertWind(90,windUnit)}`:i.v===0?` <${Utils.convertWind(20,windUnit)}`:` ${Utils.convertWind(i.v,windUnit)}-${Utils.convertWind(i.v+20,windUnit)}`;
+                                    return <div key={idx} className="flex items-center gap-4 bg-white/5 p-3 rounded-lg"><div className={`w-12 h-6 rounded-md ${i.c}`}></div><span className="text-gray-200 font-bold">{txt}</span></div>
+                                })
+                            }</div>}
+                        </div>
+                        <button onClick={onClose} className="w-full py-3 mt-6 bg-blue-600 rounded-xl font-bold hover:bg-blue-500 transition-colors">了解</button>
+                    </div>
+                </div>
+            );
+        });
+
+        const AddCityModal = memo(({ show, onClose, onAddCity, showNotification, initialQuery }) => {
+            const [query, setQuery] = useState(initialQuery || "");
+            const [isSearching, setIsSearching] = useState(false);
+            const [error, setError] = useState("");
+            
+            useEffect(() => {
+                if (show && initialQuery) setQuery(initialQuery);
+                else if (show) setQuery("");
+            }, [show, initialQuery]);
+
+            if (!show) return null;
+            
+            const handleSearch = async () => {
+                if (!query.trim()) return;
+                setIsSearching(true); setError("");
+                let searchQuery = query;
+                try { const t = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=${encodeURIComponent(query)}`).then(r=>r.json()); if(t?.[0]?.[0]?.[0]) searchQuery = t[0][0][0]; } catch (e) {}
+                try {
+                    const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${searchQuery}&count=1&language=zh&format=json`).then(r=>r.json());
+                    if (res.results?.length > 0) {
+                        const r = res.results[0];
+                        let finalName = r.name, finalCountry = r.country;
+                        try {
+                            const qs = [r.name]; if(r.country) qs.push(r.country);
+                            const translated = await Promise.all(qs.map(q => fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-TW&dt=t&q=${encodeURIComponent(q)}`).then(r=>r.json()).then(d=>d?.[0]?.[0]?.[0] || q).catch(()=>q)));
+                            finalName = translated[0]; if(r.country) finalCountry = translated[1];
+                        } catch(err) {}
+                        onAddCity({ name: finalName, code: r.country_code, lat: r.latitude, lng: r.longitude, country: finalCountry || "自訂位置" });
+                        showNotification(`已成功新增: ${finalName}`, 'success'); setQuery(""); onClose();
+                    } else setError("找不到該城市");
+                } catch (e) { setError("連線錯誤"); showNotification("網路連線錯誤", 'error'); } finally { setIsSearching(false); }
+            };
+            return (
+                <div className="absolute inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-gray-900 border border-white/20 rounded-2xl p-6 md:p-8 w-full max-w-md shadow-2xl">
+                        <div className="flex justify-between items-center mb-6"><h2 className="text-2xl font-bold flex gap-2 text-white"><Icons.Plus className="w-6 h-6 text-blue-400" /> 新增觀測城市</h2><button onClick={onClose}><Icons.X className="w-6 h-6 text-gray-400" /></button></div>
+                        <div className="mb-4">
+                            <label className="text-gray-300 block mb-2 font-medium text-sm">城市名稱</label>
+                            <div className="flex gap-2">
+                                <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSearch()} placeholder="例如: 東京, London..." className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500 transition-colors" />
+                                <button onClick={handleSearch} disabled={isSearching} className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg font-bold transition-colors flex items-center gap-2">{isSearching ? <span className="animate-spin w-4 h-4 border-2 border-white/30 border-t-white rounded-full"></span> : <Icons.Search className="w-5 h-5" />}</button>
+                            </div>
+                            {error && <div className="mt-3 bg-red-500/10 border border-red-500/50 text-red-300 p-2 rounded-lg text-sm flex gap-2 items-center"><Icons.Alert className="w-4 h-4 flex-shrink-0" />{error}</div>}
+                        </div>
+                    </div>
+                </div>
+            );
+        });
+
+        const useTextureLoader = () => {
+            const texturesRef = useRef({});
+            const [loaded, setLoaded] = useState(false);
+            useEffect(() => {
+                let mounted = true;
+                const load = async () => {
+                    const map = {};
+                    for(const [key, svg] of Object.entries(CONSTANTS.SVG_ICONS)) map[key] = await Utils.createSvgTexture(svg);
+                    map['Question'] = Utils.createCanvasTexture(ctx => { ctx.beginPath(); ctx.arc(64,64,60,0,2*Math.PI); ctx.fillStyle='#6b7280'; ctx.fill(); ctx.strokeStyle='white'; ctx.lineWidth=6; ctx.stroke(); ctx.fillStyle='white'; ctx.font='bold 80px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('?',64,64); });
+                    const texLoader = new THREE.TextureLoader();
+                    map['earth_day'] = texLoader.load('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg');
+                    map['earth_night'] = texLoader.load('https://unpkg.com/three-globe/example/img/earth-night.jpg');
+                    map['earth_clouds'] = texLoader.load('https://unpkg.com/three-globe/example/img/earth-clouds.png');
+                    if(mounted) { texturesRef.current = map; setLoaded(true); }
+                };
+                load(); return () => { mounted = false; };
+            }, []);
+            return { textures: texturesRef.current, loaded };
+        };
+
+        const useWeatherSystem = (initialCustomCities, autoRefresh) => {
+            const [data, setData] = useState([]);
+            const [loading, setLoading] = useState(false);
+            const [progress, setProgress] = useState(0);
+            const [msg, setMsg] = useState('');
+            const hasInitialized = useRef(false);
+
+            const fetchCityWeather = async (city) => {
+                try {
+                    const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lng}&current_weather=true&hourly=temperature_2m,weathercode,precipitation_probability,precipitation,cloudcover,windspeed_10m,winddirection_10m,relativehumidity_2m,is_day&daily=weathercode,temperature_2m_max,temperature_2m_min&timezone=auto&past_days=2&forecast_days=7`).then(r => r.json());
+                    const offset = res.utc_offset_seconds;
+                    const timeline = res.hourly.time.map((t, i) => ({
+                        time: new Date(new Date(t + 'Z').getTime() - offset * 1000),
+                        temp: Math.round(res.hourly.temperature_2m[i]),
+                        condition: Utils.getConditionFromWMO(res.hourly.weathercode[i]),
+                        prob: res.hourly.precipitation_probability[i],
+                        precipitation: res.hourly.precipitation[i],
+                        cloudcover: res.hourly.cloudcover[i],
+                        wind: Math.round(res.hourly.windspeed_10m[i]),
+                        windDir: res.hourly.winddirection_10m[i] || 0,
+                        humidity: res.hourly.relativehumidity_2m[i],
+                        isDay: res.hourly.is_day[i]
+                    }));
+                    const daily = res.daily.time.map((t, i) => ({
+                        date: new Date(t).toLocaleDateString('zh-TW', { weekday: 'short' }),
+                        max: Math.round(res.daily.temperature_2m_max[i]),
+                        min: Math.round(res.daily.temperature_2m_min[i]),
+                        condition: Utils.getConditionFromWMO(res.daily.weathercode[i])
+                    })).slice(0, 5);
+                    const currentProb = res.hourly.precipitation_probability[timeline.findIndex(t => t.time >= new Date())] || 0;
+                    const now = new Date();
+                    const closestIndex = timeline.reduce((bestIdx, curr, idx) => Math.abs(curr.time - now) < Math.abs(timeline[bestIdx].time - now) ? idx : bestIdx, 0);
+                    return { ...city, weather: { 
+                        temp: Math.round(res.current_weather.temperature), 
+                        condition: Utils.getConditionFromWMO(res.current_weather.weathercode), 
+                        prob: currentProb, 
+                        precipitation: res.hourly.precipitation[closestIndex] || 0,
+                        cloudcover: res.hourly.cloudcover[closestIndex] || 0,
+                        wind: res.current_weather.windspeed, 
+                        windDir: res.current_weather.winddirection, 
+                        isDay: res.current_weather.is_day, 
+                        utcOffset: offset, 
+                        timeline, 
+                        daily 
+                    } };
+                } catch(e) { return { ...city, weather: { error: true, temp: '-', condition: CONSTANTS.CONDITIONS[8], prob: 0, precipitation: 0, cloudcover: 0, wind: 0, windDir: 0, humidity: 0, isDay: 1, utcOffset: 0, timeline: [], daily: [] } }; }
+            };
+
+            const fetchAll = useCallback(async () => {
+                if(hasInitialized.current && !autoRefresh) return;
+                hasInitialized.current = true;
+                setLoading(true); setProgress(0); setMsg("正在定位...");
+                const userLoc = await Utils.getUserLocation();
+                const targetCities = userLoc ? [userLoc, ...initialCustomCities, ...CONSTANTS.DEFAULT_CITIES] : [...initialCustomCities, ...CONSTANTS.DEFAULT_CITIES];
+                setMsg("正在掃描衛星數據...");
+                const CHUNK_SIZE = 5; const results = [];
+                for (let i = 0; i < targetCities.length; i += CHUNK_SIZE) {
+                    const chunk = targetCities.slice(i, i + CHUNK_SIZE);
+                    setMsg(`數據同步中 (${Math.min(i + chunk.length, targetCities.length)}/${targetCities.length})`);
+                    setProgress(Math.round((i / targetCities.length) * 100));
+                    const chunkResults = await Promise.all(chunk.map(fetchCityWeather));
+                    results.push(...chunkResults);
+                    await new Promise(r => setTimeout(r, 50));
+                }
+                setProgress(100); setMsg("同步完成"); setData(results); setTimeout(() => setLoading(false), 500);
+            }, [initialCustomCities, autoRefresh]);
+
+            const addCity = useCallback(async (city) => {
+                setLoading(true); setMsg(`載入 ${city.name}...`);
+                const cityData = await fetchCityWeather(city);
+                setData(prev => (prev.length > 0 && prev[0].name === "我的位置") ? [prev[0], cityData, ...prev.slice(1)] : [cityData, ...prev]);
+                setLoading(false);
+            }, []);
+
+            // [NEW] Single City Reload Function
+            const reloadCity = useCallback(async (cityName) => {
+                const cityToReload = data.find(c => c.name === cityName);
+                if (!cityToReload) return;
+                const newCityData = await fetchCityWeather(cityToReload);
+                setData(prevData => prevData.map(c => c.name === cityName ? newCityData : c));
+            }, [data]); 
+
+            useEffect(() => { 
+                fetchAll(); 
+                let interval;
+                if (autoRefresh) {
+                    interval = setInterval(() => {
+                        fetchAll();
+                    }, 3600000); // 60 minutes
+                }
+                return () => clearInterval(interval);
+            }, [fetchAll, autoRefresh]);
+
+            return { data, loading, progress, msg, refetch: fetchAll, addCity, reloadCity };
+        };
+
+        const useThreeScene = (mountRef, texturesLoaded, textures, cityData, viewMode, timeIndex, onCitySelect, cameraDist, isRealtime, tempUnit, windUnit, currentDate, enableTerminator, selectedCity, highlightedCityName, cameraTarget, enableDayNight) => {
+            const sceneRef = useRef(null), cameraRef = useRef(null), controlsRef = useRef(null), markersRef = useRef([]), earthMeshRef = useRef(null), sunLightRef = useRef(null);
+            const targetRef = useRef(cameraTarget);
+            const highlightRef = useRef(highlightedCityName);
+            const distRef = useRef(cameraDist);
+            
+            useEffect(() => { targetRef.current = cameraTarget; }, [cameraTarget]);
+            useEffect(() => { highlightRef.current = highlightedCityName; }, [highlightedCityName]);
+            useEffect(() => { distRef.current = cameraDist; }, [cameraDist]);
+
+            useEffect(() => {
+                if(!mountRef.current || !texturesLoaded) return;
+                const width = window.innerWidth, height = window.innerHeight;
+                const scene = new THREE.Scene(); sceneRef.current = scene;
+                const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+                
+                // Initial Camera Position: Look at Taiwan (Taipei)
+                const taipeiPos = Utils.latLngToVector3(25.0330, 121.5654, 7.5);
+                camera.position.copy(taipeiPos);
+                camera.lookAt(0, 0, 0);
+                
+                cameraRef.current = camera;
+                const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                renderer.setSize(width, height); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                renderer.domElement.style.touchAction = 'none';
+                mountRef.current.appendChild(renderer.domElement);
+
+                const earthMaterial = new THREE.ShaderMaterial({
+                    uniforms: { 
+                        dayTexture: { value: textures['earth_day'] }, nightTexture: { value: textures['earth_night'] }, 
+                        sunDirection: { value: new THREE.Vector3(0, 0, 1) }, uEnableTerminator: { value: enableTerminator ? 1.0 : 0.0 }, uEnableDayNight: { value: enableDayNight ? 1.0 : 0.0 }
+                    },
+                    vertexShader: `varying vec2 vUv; varying vec3 vNormal; void main() { vUv = uv; vNormal = normalize(mat3(modelMatrix) * normal); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+                    fragmentShader: `uniform sampler2D dayTexture; uniform sampler2D nightTexture; uniform vec3 sunDirection; uniform float uEnableTerminator; uniform float uEnableDayNight; varying vec2 vUv; varying vec3 vNormal; void main() { vec3 dayColor = texture2D(dayTexture, vUv).rgb; vec3 nightColor = texture2D(nightTexture, vUv).rgb; vec3 normal = normalize(vNormal); vec3 sunDir = normalize(sunDirection); float cosineAngle = dot(normal, sunDir); float mixVal = smoothstep(-0.25, 0.25, cosineAngle); if (uEnableTerminator > 0.5) mixVal = smoothstep(-0.15, 0.15, cosineAngle); if (uEnableDayNight < 0.5) mixVal = 1.0; vec3 finalColor = mix(nightColor, dayColor, mixVal); if (uEnableTerminator > 0.5 && uEnableDayNight > 0.5) { vec3 sunsetColor = vec3(1.0, 0.6, 0.3); if (cosineAngle > -0.05 && cosineAngle < 0.15) finalColor = mix(finalColor, sunsetColor, 0.3 * (1.0 - abs(cosineAngle) * 6.0)); } float brightness = mix(0.9, 1.1, mixVal); if (uEnableDayNight < 0.5) brightness = 1.0; gl_FragColor = vec4(finalColor * brightness, 1.0); }`
+                });
+                const earthMesh = new THREE.Mesh(new THREE.SphereGeometry(2, 64, 64), earthMaterial); earthMeshRef.current = earthMesh;
+                const earthGroup = new THREE.Group(); earthGroup.add(earthMesh);
+                const clouds = new THREE.Mesh(new THREE.SphereGeometry(2.03, 64, 64), new THREE.MeshPhongMaterial({ map: textures['earth_clouds'], transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending }));
+                earthGroup.add(clouds); scene.add(earthGroup);
+                scene.add(new THREE.Mesh(new THREE.SphereGeometry(2.15, 64, 64), new THREE.MeshPhongMaterial({ color: 0x3a228a, transparent: true, opacity: 0.1, side: THREE.BackSide, blending: THREE.AdditiveBlending })));
+                const starGeo = new THREE.BufferGeometry(); const starPos = new Float32Array(3000 * 3); for(let i=0; i<3000*3; i++) starPos[i] = (Math.random()-0.5)*200;
+                starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3)); scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.05 })));
+                scene.add(new THREE.AmbientLight(0xffffff, 0.2)); 
+                const dirLight = new THREE.DirectionalLight(0xffffff, 1.5); dirLight.position.set(0, 0, 10); scene.add(dirLight); sunLightRef.current = dirLight;
+
+                const controls = new OrbitControls(camera, renderer.domElement);
+                controls.enablePan = false; controls.enableZoom = true; controls.minDistance = 2.5; controls.maxDistance = 10; controls.autoRotate = false; controls.rotateSpeed = 0.5; controlsRef.current = controls;
+
+                const raycaster = new THREE.Raycaster(); const mouse = new THREE.Vector2(); let isDragging = false, startX = 0, startY = 0;
+                const onPointerDown = (e) => { isDragging = false; startX = e.clientX; startY = e.clientY; };
+                const onPointerMove = (e) => { if (Math.abs(e.clientX - startX) > 5 || Math.abs(e.clientY - startY) > 5) isDragging = true; };
+                const onPointerUp = (e) => {
+                    if (isDragging) return;
+                    const rect = renderer.domElement.getBoundingClientRect();
+                    mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1; mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+                    raycaster.setFromCamera(mouse, camera); raycaster.params.Points.threshold = 0.2;
+                    const intersects = raycaster.intersectObjects(markersRef.current, false);
+                    if (intersects.length > 0) return onCitySelect(intersects.sort((a, b) => a.distance - b.distance)[0].object.userData);
+                    let closestDist = 40, closestCity = null;
+                    markersRef.current.forEach(sprite => {
+                        const pos = sprite.position.clone(); pos.project(camera);
+                        if (pos.z < 1) {
+                            const dist = Math.sqrt(Math.pow((pos.x * 0.5 + 0.5) * rect.width + rect.left - e.clientX, 2) + Math.pow((-(pos.y * 0.5) + 0.5) * rect.height + rect.top - e.clientY, 2));
+                            if (dist < closestDist) { closestDist = dist; closestCity = sprite.userData; }
+                        }
+                    });
+                    if (closestCity) onCitySelect(closestCity);
+                };
+                renderer.domElement.addEventListener('pointerdown', onPointerDown); renderer.domElement.addEventListener('pointermove', onPointerMove); renderer.domElement.addEventListener('pointerup', onPointerUp);
+
+                let frameId;
+                const animate = () => {
+                    frameId = requestAnimationFrame(animate); clouds.rotation.y += 0.0003; controls.update();
+                    controls.rotateSpeed = camera.position.length() * 0.08;
+                    const time = Date.now() * 0.002, hlName = highlightRef.current;
+                    markersRef.current.forEach(m => {
+                        let scale = m.userData.isSelected ? 0.22 : 0.16;
+                        if (hlName && m.userData.name === hlName) scale = 0.3 + Math.abs(Math.sin(time * 8)) * 0.15; else scale *= (1 + Math.sin(time + m.userData.randomOffset) * 0.05);
+                        m.scale.setScalar(scale);
+                    });
+                    const target = targetRef.current;
+                    if (target && controlsRef.current) { 
+                        const currentDist = distRef.current; 
+                        const targetVec = Utils.latLngToVector3(target.lat, target.lng, currentDist);
+                        camera.position.lerp(targetVec, 0.05).normalize().multiplyScalar(currentDist);
+                        controlsRef.current.update(); 
+                    }
+                    renderer.render(scene, camera);
+                };
+                animate();
+                const onResize = () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); };
+                window.addEventListener('resize', onResize);
+
+                return () => { 
+                    cancelAnimationFrame(frameId); window.removeEventListener('resize', onResize); 
+                    renderer.domElement.removeEventListener('pointerdown', onPointerDown); renderer.domElement.removeEventListener('pointermove', onPointerMove); renderer.domElement.removeEventListener('pointerup', onPointerUp);
+                    scene.traverse((o) => { if(o.geometry) o.geometry.dispose(); if(o.material) (Array.isArray(o.material)?o.material: [o.material]).forEach(m=>m.dispose()); });
+                    renderer.dispose(); if(mountRef.current) mountRef.current.removeChild(renderer.domElement); 
+                };
+            }, [texturesLoaded]);
+
+            useEffect(() => { if(earthMeshRef.current) { earthMeshRef.current.material.uniforms.uEnableTerminator.value = enableTerminator ? 1.0 : 0.0; earthMeshRef.current.material.uniforms.uEnableDayNight.value = enableDayNight ? 1.0 : 0.0; } }, [enableTerminator, enableDayNight]);
+            useEffect(() => { 
+                if(cameraRef.current && !targetRef.current) cameraRef.current.position.setLength(cameraDist); 
+            }, [cameraDist]);
+            
+            useEffect(() => { if(earthMeshRef.current && sunLightRef.current && currentDate) { const d = Utils.getSunDirection(currentDate); earthMeshRef.current.material.uniforms.sunDirection.value.copy(d); sunLightRef.current.position.copy(d).multiplyScalar(20); } }, [currentDate]);
+
+            useEffect(() => {
+                if(!sceneRef.current || !texturesLoaded || cityData.length === 0) return;
+                markersRef.current.forEach(m => { sceneRef.current.remove(m); if(m.userData.dot) sceneRef.current.remove(m.userData.dot); m.material.dispose(); });
+                markersRef.current = [];
+                cityData.forEach(city => {
+                    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: textures['Question'] }));
+                    sprite.position.copy(Utils.latLngToVector3(city.lat, city.lng, 2.08)); sprite.scale.setScalar(0.16);
+                    sprite.userData = { ...city, randomOffset: Math.random() * 100 };
+                    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.01, 8, 8), new THREE.MeshBasicMaterial({ color: 0xff0000 }));
+                    dot.position.copy(Utils.latLngToVector3(city.lat, city.lng, 2.0));
+                    sceneRef.current.add(dot); sceneRef.current.add(sprite); markersRef.current.push(sprite); sprite.userData.dot = dot; 
+                });
+            }, [cityData, texturesLoaded]);
+
+            useEffect(() => {
+                if(!texturesLoaded || markersRef.current.length === 0) return;
+                const masterTime = currentDate;
+                markersRef.current.forEach((sprite, index) => {
+                    const city = cityData[index];
+                    let data = null;
+                    
+                    if (city?.weather?.error) {
+                        data = { ...city.weather }; // Use error data
+                    } else if (city?.weather?.timeline?.length) {
+                        data = isRealtime ? Utils.findClosestData(city.weather.timeline, new Date()) : Utils.findClosestData(city.weather.timeline, masterTime);
+                        if (!data) data = { temp: city.weather.temp, condition: city.weather.condition, prob: city.weather.prob, precipitation: 0, cloudcover: 0, wind: city.weather.wind, windDir: city.weather.windDir, humidity: 0 };
+                    } else {
+                        return; // Skip invalid city data
+                    }
+
+                    let texture;
+                    sprite.material.rotation = 0; sprite.material.color.set(0xffffff);
+                    
+                    if (data.error) {
+                        if(!textures['Alert']) textures['Alert'] = Utils.createSvgTexture(CONSTANTS.SVG_ICONS.Alert); 
+                        texture = textures['Alert'];
+                        sprite.material.color.set(0xff5555); // Tint red
+                    } else if(viewMode === 'weather') texture = textures[data.condition.svgKey] || textures['Sunny'];
+                    else if (viewMode === 'temperature') {
+                        const t = Utils.convertTemp(data.temp, tempUnit), key = `t_${t}_${tempUnit}`;
+                        if(!textures[key]) textures[key] = Utils.createCanvasTexture(ctx => { ctx.beginPath(); ctx.arc(64,64,60,0,2*Math.PI); ctx.fillStyle = Utils.getTempColor(data.temp); ctx.fill(); ctx.lineWidth=6; ctx.strokeStyle='white'; ctx.stroke(); ctx.fillStyle='white'; ctx.font='bold 50px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(`${t}°`,64,64); });
+                        texture = textures[key];
+                    } else if (viewMode === 'probability') {
+                        const p = data.prob || 0, key = `p_${p}`;
+                        if(!textures[key]) textures[key] = Utils.createCanvasTexture(ctx => { ctx.beginPath(); ctx.arc(64,64,60,0,2*Math.PI); ctx.fillStyle = Utils.getProbColor(p); ctx.fill(); ctx.lineWidth=6; ctx.strokeStyle='white'; ctx.stroke(); ctx.fillStyle='white'; ctx.font='bold 45px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(`${p}%`,64,64); });
+                        texture = textures[key];
+                    } else if (viewMode === 'precipitation') {
+                        const p = data.precipitation || 0, key = `pr_${p}`;
+                        if(!textures[key]) textures[key] = Utils.createCanvasTexture(ctx => { ctx.beginPath(); ctx.arc(64,64,60,0,2*Math.PI); ctx.fillStyle = Utils.getPrecipColor(p); ctx.fill(); ctx.lineWidth=6; ctx.strokeStyle='white'; ctx.stroke(); ctx.fillStyle='white'; ctx.font='bold 40px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(`${p}`,64,64); });
+                        texture = textures[key];
+                    } else if (viewMode === 'cloudcover') {
+                        const c = data.cloudcover || 0, key = `cl_${c}`;
+                        if(!textures[key]) textures[key] = Utils.createCanvasTexture(ctx => { ctx.beginPath(); ctx.arc(64,64,60,0,2*Math.PI); ctx.fillStyle = Utils.getCloudColor(c); ctx.fill(); ctx.lineWidth=6; ctx.strokeStyle='white'; ctx.stroke(); ctx.fillStyle='#1f2937'; ctx.font='bold 40px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(`${c}%`,64,64); });
+                        texture = textures[key];
+                    } else if (viewMode === 'humidity') {
+                        const h = data.humidity || 0, key = `h_${h}`;
+                        if(!textures[key]) textures[key] = Utils.createCanvasTexture(ctx => { ctx.beginPath(); ctx.arc(64,64,60,0,2*Math.PI); ctx.fillStyle = Utils.getHumidityColor(h); ctx.fill(); ctx.lineWidth=6; ctx.strokeStyle='white'; ctx.stroke(); ctx.fillStyle='white'; ctx.font='bold 45px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(`${h}%`,64,64); });
+                        texture = textures[key];
+                    } else if (viewMode === 'wind') {
+                        const w = data.wind || 0, dw = Utils.convertWind(w, windUnit), key = `w_${dw}_${windUnit}`;
+                        if(!textures[key]) textures[key] = Utils.createCanvasTexture(ctx => { 
+                            ctx.beginPath(); 
+                            ctx.arc(64,64,60,0,2*Math.PI); 
+                            ctx.fillStyle = Utils.getWindColor(w); 
+                            ctx.fill(); 
+                            ctx.lineWidth=6; 
+                            ctx.strokeStyle='white'; 
+                            ctx.stroke(); 
+                            ctx.fillStyle='black'; 
+                            ctx.font='bold 55px monospace'; 
+                            ctx.textAlign='center'; 
+                            ctx.textBaseline='middle'; 
+                            ctx.fillText(`${dw}`,64,64); 
+                        });
+                        texture = textures[key];
+                    } else if (viewMode === 'windDir') {
+                        const dt = Utils.getWindDirectionText(data.windDir), key = `wd_${data.windDir}_${dt}`;
+                        if(!textures[key]) textures[key] = Utils.createCanvasTexture(ctx => { ctx.fillStyle = 'white'; ctx.font = 'bold 36px "Noto Sans TC", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(dt, 64, 105); ctx.save(); ctx.translate(64, 50); ctx.rotate((data.windDir + 180) * Math.PI / 180); ctx.beginPath(); ctx.moveTo(0, -35); ctx.lineTo(20, 25); ctx.lineTo(0, 10); ctx.lineTo(-20, 25); ctx.closePath(); ctx.fillStyle = 'white'; ctx.fill(); ctx.strokeStyle = 'black'; ctx.lineWidth = 2; ctx.stroke(); ctx.restore(); });
+                        texture = textures[key]; sprite.material.rotation = 0; sprite.material.color.set(Utils.getWindColor(data.wind));
+                    }
+                    if(sprite.material.map !== texture) sprite.material.map = texture;
+                });
+            }, [currentDate, viewMode, isRealtime, tempUnit, windUnit, texturesLoaded, cityData]);
+
+            return { controlsRef };
+        };
+
+        const GlobalWeatherStation = () => {
+            const mountRef = useRef(null);
+            const [selectedCity, setSelectedCity] = useState(null);
+            const [viewMode, setViewMode] = useState('weather');
+            const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+            const [isLegendOpen, setIsLegendOpen] = useState(false);
+            const [isAddCityOpen, setIsAddCityOpen] = useState(false);
+            const [isSearchOpen, setIsSearchOpen] = useState(false);
+            const [isTimelineOpen, setIsTimelineOpen] = useState(false);
+            const [notification, setNotification] = useState(null);
+            const [tempUnit, setTempUnit] = useState('C');
+            const [windUnit, setWindUnit] = useState('kmh');
+            const [customCities, setCustomCities] = useState(() => JSON.parse(localStorage.getItem('my_weather_cities') || '[]'));
+            const [cameraDist, setCameraDist] = useState(6);
+            const [timeIndex, setTimeIndex] = useState(0);
+            const [nowIndex, setNowIndex] = useState(0); 
+            const [isPlaying, setIsPlaying] = useState(false);
+            const [isRotating, setIsRotating] = useState(false);
+            const [isRealtime, setIsRealtime] = useState(true);
+            const [enableTerminator, setEnableTerminator] = useState(true); 
+            const [enableDayNight, setEnableDayNight] = useState(true);
+            const [autoRefresh, setAutoRefresh] = useState(false);
+            const [highlightedCityName, setHighlightedCityName] = useState(null);
+            const [addCityQuery, setAddCityQuery] = useState("");
+            const [cameraTarget, setCameraTarget] = useState(null);
+
+            const { textures, loaded: texturesLoaded } = useTextureLoader();
+            const { data: cityData, loading, progress, msg, refetch, addCity, reloadCity } = useWeatherSystem(customCities, autoRefresh);
+            
+            const handleCitySelect = useCallback((city) => { setSelectedCity(city); setCameraTarget(city); setIsRotating(false); setTimeout(() => setCameraTarget(null), 2000); }, []);
+            const handleSearchSelect = useCallback((city) => { setCameraTarget(city); setHighlightedCityName(city.name); setIsRotating(false); setSelectedCity(null); setCameraDist(7.5); setTimeout(() => setCameraTarget(null), 2000); setTimeout(() => setHighlightedCityName(null), 10000); }, []);
+            const showNotification = useCallback((msg, type = 'success') => setNotification({ msg, type }), []);
+
+            const timelineData = useMemo(() => cityData.find(c => c.weather?.timeline?.length)?.weather.timeline.map(t => t.time) || [], [cityData]);
+            const currentDate = useMemo(() => (isRealtime || !timelineData.length) ? new Date() : timelineData[Math.min(timeIndex, timelineData.length - 1)], [isRealtime, timelineData, timeIndex]);
+
+            // [Important] Sync selectedCity with latest cityData for refresh logic
+            const activeCityData = useMemo(() => {
+                if (!selectedCity) return null;
+                // Try to find the city in the live cityData array to get the latest weather info
+                return cityData.find(c => c.name === selectedCity.name) || selectedCity;
+            }, [selectedCity, cityData]);
+
+            // Check WebGL Support
+            if (!checkWebGL()) return <FallbackView />;
+
+            const { controlsRef } = useThreeScene(mountRef, texturesLoaded, textures, cityData, viewMode, timeIndex, handleCitySelect, cameraDist, isRealtime, tempUnit, windUnit, currentDate, enableTerminator, selectedCity, highlightedCityName, cameraTarget, enableDayNight);
+
+            useEffect(() => { if(controlsRef.current) controlsRef.current.autoRotate = !selectedCity && isRotating && !isPlaying; }, [selectedCity, isRotating, isPlaying]);
+
+            useEffect(() => {
+                if(timelineData.length > 0) {
+                    const now = new Date(), closest = timelineData.reduce((prev, curr, i) => Math.abs(curr - now) < Math.abs(timelineData[prev] - now) ? i : prev, 0);
+                    if (timeIndex === 0 && isRealtime) setTimeIndex(closest);
+                    setNowIndex(closest);
+                }
+            }, [timelineData]);
+
+            useEffect(() => {
+                let interval;
+                if(isPlaying && timelineData.length > 0) {
+                    setIsRealtime(false);
+                    interval = setInterval(() => setTimeIndex(prev => (prev >= timelineData.length - 1) ? 0 : prev + 1), 200);
+                }
+                return () => clearInterval(interval);
+            }, [isPlaying, timelineData]);
+
+            const handleResetTime = useCallback(() => { setTimeIndex(nowIndex); setIsPlaying(false); setIsRealtime(true); }, [nowIndex]);
+            const handleSliderChange = useCallback((newIndex) => { setTimeIndex(newIndex); setIsPlaying(false); setIsRealtime(false); }, []);
+            const handleAddCity = useCallback((newCity) => {
+                const updatedCities = [...customCities, newCity];
+                setCustomCities(updatedCities); localStorage.setItem('my_weather_cities', JSON.stringify(updatedCities));
+                addCity(newCity);
+            }, [customCities, addCity]);
+            
+            const handleReload = useCallback(() => {
+                if (activeCityData) {
+                    reloadCity(activeCityData.name);
+                    showNotification(`正在重新載入 ${activeCityData.name}...`, 'success');
+                }
+            }, [activeCityData, reloadCity, showNotification]);
+
+            return (
+                <div className="relative w-full h-screen bg-black text-white overflow-hidden select-none">
+                    <div ref={mountRef} className="w-full h-full absolute top-0 left-0" />
+                    <Navbar loading={loading} onRefresh={refetch} onToggleSettings={() => setIsSettingsOpen(true)} onToggleLegend={() => setIsLegendOpen(true)} onOpenAddCity={() => { setAddCityQuery(""); setIsAddCityOpen(true); }} onOpenSearch={() => setIsSearchOpen(true)} rotating={isRotating} setRotating={setIsRotating} isTimelineOpen={isTimelineOpen} setIsTimelineOpen={setIsTimelineOpen} />
+                    <ZoomControl zoom={cameraDist} setZoom={setCameraDist} />
+                    <TimelineControl timeline={timelineData} timeIndex={timeIndex} setTimeIndex={handleSliderChange} nowIndex={nowIndex} playing={isPlaying} setPlaying={setIsPlaying} onReset={handleResetTime} isRealtime={isRealtime} isOpen={isTimelineOpen} />
+                    {/* Use activeCityData to ensure reloaded data is shown */}
+                    {activeCityData && <CityDetailCard city={activeCityData} currentMasterTime={currentDate} isRealtime={isRealtime} onClose={() => setSelectedCity(null)} tempUnit={tempUnit} windUnit={windUnit} onReload={handleReload} />}
+                    <SettingsModal show={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} viewMode={viewMode} setViewMode={setViewMode} tempUnit={tempUnit} setTempUnit={setTempUnit} windUnit={windUnit} setWindUnit={setWindUnit} currentDate={currentDate} enableTerminator={enableTerminator} setEnableTerminator={setEnableTerminator} enableDayNight={enableDayNight} setEnableDayNight={setEnableDayNight} autoRefresh={autoRefresh} setAutoRefresh={setAutoRefresh} />
+                    <LegendModal show={isLegendOpen} onClose={() => setIsLegendOpen(false)} tempUnit={tempUnit} windUnit={windUnit} />
+                    <AddCityModal show={isAddCityOpen} onClose={() => setIsAddCityOpen(false)} onAddCity={handleAddCity} showNotification={showNotification} initialQuery={addCityQuery} />
+                    <SearchModal show={isSearchOpen} onClose={() => setIsSearchOpen(false)} cityData={cityData} onSelectCity={handleSearchSelect} onOpenAddCity={(q) => { setAddCityQuery(q); setIsSearchOpen(false); setIsAddCityOpen(true); }} />
+                    {loading && <LoadingScreen progress={progress} message={msg} />}
+                    {notification && <Toast msg={notification.msg} type={notification.type} onClose={() => setNotification(null)} />}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<GlobalWeatherStation />);
+    </script>
+</body>
+</html>
